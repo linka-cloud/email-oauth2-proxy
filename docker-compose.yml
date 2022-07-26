@@ -4,8 +4,10 @@ services:
   email-oauth2-proxy:
     image: linkacloud/email-oauth2-proxy
     command:
-    - --config-file=/email-oauth2-proxy/emailproxy.config
+    - --config-file=/email-oauth2-proxy/config/emailproxy.prod.config
     ports:
       - "8888:80"
+      - "1993:1993"
+      - "1587:1587"
     volumes:
     - ./config:/email-oauth2-proxy/config

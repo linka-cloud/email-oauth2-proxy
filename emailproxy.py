@@ -6,9 +6,6 @@ __copyright__ = 'Copyright (c) 2022 Simon Robinson'
 __license__ = 'Apache 2.0'
 __version__ = '2022-07-09'  # ISO 8601 (YYYY-MM-DD)
 
-import sys
-sys.tracebacklimit = 0
-
 import argparse
 import asyncore
 import base64
@@ -21,6 +18,7 @@ import json
 import logging
 import logging.handlers
 import os
+from os.path import exists
 import pathlib
 import plistlib
 import queue
@@ -154,8 +152,11 @@ class Log:
                 handler = pyoslog.Handler()
                 handler.setSubsystem(APP_PACKAGE)
         else:
-            handler = logging.handlers.SysLogHandler(address='/dev/log')
-            handler.setFormatter(logging.Formatter(Log._SYSLOG_MESSAGE_FORMAT))
+            if exists('/dev/log'):
+                handler = logging.handlers.SysLogHandler(address='/dev/log')
+                handler.setFormatter(logging.Formatter(Log._SYSLOG_MESSAGE_FORMAT))
+            else:
+                handler = logging.StreamHandler()
         Log._HANDLER = handler
         Log._LOGGER.addHandler(Log._HANDLER)
         Log.set_level(logging.INFO)
