@@ -6,6 +6,9 @@ __copyright__ = 'Copyright (c) 2022 Simon Robinson'
 __license__ = 'Apache 2.0'
 __version__ = '2022-07-09'  # ISO 8601 (YYYY-MM-DD)
 
+import sys
+sys.tracebacklimit = 0
+
 import argparse
 import asyncore
 import base64
@@ -274,6 +277,7 @@ class OAuth2Helper:
         token_url = config.get(username, 'token_url', fallback=None)
         oauth2_scope = config.get(username, 'oauth2_scope', fallback=None)
         redirect_uri = config.get(username, 'redirect_uri', fallback=None)
+        redirect_listen = config.get(username, 'redirect_listen', fallback=None)
         client_id = config.get(username, 'client_id', fallback=None)
         client_secret = config.get(username, 'client_secret', fallback=None)
 
@@ -305,7 +309,8 @@ class OAuth2Helper:
                                                                               oauth2_scope, username)
                 # note: get_oauth2_authorisation_code is a blocking call
                 success, authorisation_code = OAuth2Helper.get_oauth2_authorisation_code(permission_url, redirect_uri,
-                                                                                         username, connection_info)
+                                                                                         username, connection_info,
+                                                                                         listen_address=redirect_listen)
                 if not success:
                     Log.info('Authentication request failed or expired for account', username, '- aborting login')
                     return False, '%s: Login failed - the authentication request expired or was cancelled for ' \
@@ -322,17 +327,19 @@ class OAuth2Helper:
                 AppConfig.save()
 
             else:
+                try:
+                    access_token = OAuth2Helper.decrypt(cryptographer, access_token)
+                    decrypted_refresh_token = OAuth2Helper.decrypt(cryptographer, refresh_token)
+                except InvalidToken as e:
+                    Log.error('Invalid password for account', username, '- aborting login', Log.error_string(e))
+                    return False, '%s: Login failed - the password for account %s is invalid' % (APP_NAME, username)
                 if access_token_expiry - current_time < TOKEN_EXPIRY_MARGIN:  # if expiring soon, refresh token
-                    response = OAuth2Helper.refresh_oauth2_access_token(token_url, client_id, client_secret,
-                                                                        OAuth2Helper.decrypt(cryptographer,
-                                                                                             refresh_token))
+                    response = OAuth2Helper.refresh_oauth2_access_token(token_url, client_id, client_secret, decrypted_refresh_token)
 
                     access_token = response['access_token']
                     config.set(username, 'access_token', OAuth2Helper.encrypt(cryptographer, access_token))
                     config.set(username, 'access_token_expiry', str(current_time + response['expires_in']))
                     AppConfig.save()
-                else:
-                    access_token = OAuth2Helper.decrypt(cryptographer, access_token)
 
             # send authentication command to server (response checked in ServerConnection) - note: we only support
             # single-trip authentication (SASL) without actually checking the server's capabilities - improve?
@@ -378,7 +385,7 @@ class OAuth2Helper:
     @staticmethod
     def start_redirection_receiver_server(token_request):
         """Starts a local WSGI web server at token_request['redirect_uri'] to receive OAuth responses"""
-        parsed_uri = urllib.parse.urlparse(token_request['redirect_uri'])
+        parsed_uri = urllib.parse.urlparse(token_request['listen_address'] if token_request['listen_address'] is not None else token_request['redirect_uri'])
         parsed_port = 80 if parsed_uri.port is None else parsed_uri.port
         Log.debug('Local server auth mode (%s:%d): starting server to listen for authentication response' % (
             parsed_uri.hostname, parsed_port))
@@ -431,10 +438,11 @@ class OAuth2Helper:
         return '%s?%s' % (permission_url, '&'.join(param_pairs))
 
     @staticmethod
-    def get_oauth2_authorisation_code(permission_url, redirect_uri, username, connection_info):
+    def get_oauth2_authorisation_code(permission_url, redirect_uri, username, connection_info, listen_address = None):
         """Submit an authorisation request to the parent app and block until it is provided (or the request fails)"""
         token_request = {'connection': connection_info, 'permission_url': permission_url,
-                         'redirect_uri': redirect_uri, 'username': username, 'expired': False}
+                         'redirect_uri': redirect_uri, 'listen_address': listen_address,
+                         'username': username, 'expired': False}
         REQUEST_QUEUE.put(token_request)
         wait_time = 0
         while True:
